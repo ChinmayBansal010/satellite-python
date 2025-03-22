@@ -2,28 +2,32 @@ import ee
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.ensemble import GradientBoostingRegressor
 
 class GreenAreaAnalyzer:
-    def __init__(self, locations, start_date='2024-01-01', end_date='2025-01-01'):
+    def __init__(self, locations, train_years=3, predict_years=1):
         ee.Initialize(project='satellite-454512')
         self.locations = locations
-        self.start_date = start_date
-        self.end_date = end_date
+        self.train_years = train_years
+        self.predict_years = predict_years
         self.local_folder = 'NDVI_Images'
-        # os.makedirs(self.local_folder, exist_ok=True)
+        os.makedirs(self.local_folder, exist_ok=True)
 
-    def fetch_and_calculate_ndvi(self, name, coords):
+    def fetch_and_calculate_ndvi(self, name, coords, start_date, end_date):
         area_of_interest = ee.Geometry.Rectangle([coords[2], coords[0], coords[3], coords[1]])
         collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
                       .filterBounds(area_of_interest)
-                      .filterDate(self.start_date, self.end_date)
+                      .filterDate(start_date, end_date)
                       .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
                       .select(['B8', 'B4']))
         images = collection.toList(collection.size()).getInfo()
+
+        if len(images) == 0:
+            print(f"No images found for {name} in the given date range.")
+            return name, pd.DataFrame()
 
         ndvi_values, dates = [], []
         for image_info in images:
@@ -43,17 +47,24 @@ class GreenAreaAnalyzer:
 
         return name, pd.DataFrame({'Date': dates, 'NDVI': ndvi_values})
 
-    def analyze_parallel(self):
+    def analyze_parallel(self, start_date, end_date):
         with ThreadPoolExecutor() as executor:
-            results = executor.map(lambda loc: self.fetch_and_calculate_ndvi(loc[0], loc[1]), self.locations.items())
+            results = executor.map(lambda loc: self.fetch_and_calculate_ndvi(loc[0], loc[1], start_date, end_date), self.locations.items())
         return dict(results)
 
     def plot_and_predict(self):
-        results = self.analyze_parallel()
+        base_year = 2019
+        train_start_date = datetime(base_year, 1, 1).strftime('%Y-%m-%d')
+        train_end_date = datetime(base_year + self.train_years, 1, 1).strftime('%Y-%m-%d')
+        predict_end_date = datetime(base_year + self.train_years + self.predict_years, 1, 1).strftime('%Y-%m-%d')
+
+        results = self.analyze_parallel(train_start_date, train_end_date)
+        actual_future_results = self.analyze_parallel(train_end_date, predict_end_date)
+
         num_locations = len(results)
-        cols = min(5, num_locations)
+        cols = min(3, num_locations)
         rows = (num_locations + cols - 1) // cols
-        fig, axs = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False)
+        fig, axs = plt.subplots(rows, cols, figsize=(5 * cols, 5 * rows), squeeze=False)
 
         greenery_change = []
 
@@ -68,12 +79,24 @@ class GreenAreaAnalyzer:
             X = df['Timestamp'].values.reshape(-1, 1)
             y = df['NDVI'].values.reshape(-1, 1)
 
-            model = GradientBoostingRegressor(n_estimators=100, random_state=42)
+            model = GradientBoostingRegressor(n_estimators=200, learning_rate=0.05, max_depth=5, random_state=42)
             model.fit(X, y.ravel())
-            predictions = model.predict(X)
+
+            future_dates = pd.date_range(start=train_end_date, end=predict_end_date, freq='ME')
+            future_timestamps = (future_dates - pd.Timestamp("1970-01-01")) // pd.Timedelta('1s')
+            future_timestamps = np.array(future_timestamps).reshape(-1, 1)
+
+            if len(future_timestamps) > 0:
+                predictions = model.predict(future_timestamps)
+                ax.plot(future_dates, predictions, color='green', label='Predicted NDVI', linewidth=1.5)
 
             ax.scatter(df['Date'], y, color='blue', label='Actual NDVI', s=30)
-            ax.plot(df['Date'], predictions, color='red', label='Predicted NDVI', linewidth=1.5)
+            ax.plot(df['Date'], model.predict(X), color='orange', label='Fitted NDVI', linewidth=1.5)
+
+            if name in actual_future_results and not actual_future_results[name].empty:
+                future_actual_df = actual_future_results[name]
+                ax.scatter(future_actual_df['Date'], future_actual_df['NDVI'], color='red', label='Actual Future NDVI', s=30)
+
             ax.set_xlabel('Date')
             ax.set_ylabel('NDVI')
             ax.set_title(f'NDVI Trend and Prediction for {name}')
@@ -90,22 +113,12 @@ class GreenAreaAnalyzer:
         plt.tight_layout()
         plt.show()
 
-        # Display locations where greenery increased
         increased_locations = [name for name, change in greenery_change if change == "increased"]
         print("Locations with increased greenery:", increased_locations)
 
 if __name__ == "__main__":
     locations = {
-        'Location 1': [28.5, 28.7, 77.2, 77.4],
-        'Location 2': [28.4, 28.6, 77.1, 77.3],
-        'Location 3': [28.3, 28.5, 77.0, 77.2],
-        'Location 4': [28.2, 28.4, 76.9, 77.1],
-        'Location 5': [28.1, 28.3, 76.8, 77.0],
-        'Location 6': [28.0, 28.2, 76.7, 76.9],
-        'Location 7': [27.9, 28.1, 76.6, 76.8],
-        'Location 8': [27.8, 28.0, 76.5, 76.7],
-        'Location 9': [27.7, 27.9, 76.4, 76.6],
-        'Location 10': [27.6, 27.8, 76.3, 76.5]
+        'Location 1': [28.5, 28.7, 77.2, 77.4]
     }
     analyzer = GreenAreaAnalyzer(locations)
     analyzer.plot_and_predict()
