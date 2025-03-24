@@ -65,11 +65,11 @@ class GreenAreaAnalyzer:
         actual_future_results = self.analyze_sequential(train_end_date, predict_end_date)
 
         regressors = {
-            # 'RandomForest': RandomForestRegressor(n_estimators=100, random_state=42),
+            'RandomForest': RandomForestRegressor(n_estimators=100, random_state=42),
             'SVR': SVR(),
-            # 'GradientBoosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
-            # 'DecisionTree': DecisionTreeRegressor(random_state=42),
-            # 'XGBoost': XGBRegressor(n_estimators=100, random_state=42)
+            'GradientBoosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
+            'DecisionTree': DecisionTreeRegressor(random_state=42),
+            'XGBoost': XGBRegressor(n_estimators=100, random_state=42)
         }
 
         for name, df in results.items():
