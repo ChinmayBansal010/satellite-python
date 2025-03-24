@@ -70,7 +70,7 @@ This project analyzes the greenery trend using NDVI (Normalized Difference Veget
 - Check internet connectivity.
 
 ## License
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 - Google Earth Engine for satellite data.
