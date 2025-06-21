@@ -10,9 +10,14 @@ from xgboost import XGBRegressor
 from sklearn.preprocessing import StandardScaler
 import mpl_toolkits.axes_grid1
 
+try:
+    ee.Initialize()
+except Exception as e:
+    ee.Authenticate()
+    ee.Initialize(project='satellite-454512')
+    
 class GreenAreaAnalyzer:
     def __init__(self, locations, train_years=5, predict_years=2):
-        ee.Initialize(project='satellite-454512')
         self.locations = locations
         self.train_years = train_years
         self.predict_years = predict_years
@@ -20,10 +25,10 @@ class GreenAreaAnalyzer:
     def fetch_and_calculate_ndvi(self, name, coords, start_date, end_date):
         area_of_interest = ee.Geometry.Rectangle([coords[1], coords[0], coords[3], coords[2]])
         collection = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                    .filterBounds(area_of_interest)
-                    .filterDate(start_date, end_date)
-                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
-                    .select(['B8', 'B4']))
+                      .filterBounds(area_of_interest)
+                      .filterDate(start_date, end_date)
+                      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+                      .select(['B8', 'B4']))
         images = collection.toList(collection.size()).getInfo()
 
         if len(images) == 0:
@@ -42,8 +47,9 @@ class GreenAreaAnalyzer:
                 scale=30,
                 maxPixels=1e13
             ).getInfo()
-            if result and 'NDVI' in result:
-                ndvi_values.append(float(result['NDVI']))
+            ndvi_value = result.get('NDVI')
+            if ndvi_value is not None:
+                ndvi_values.append(float(ndvi_value))
                 dates.append(date)
 
         return name, pd.DataFrame({'Date': dates, 'NDVI': ndvi_values})
@@ -94,18 +100,22 @@ class GreenAreaAnalyzer:
             n_rows = len(regressors)
             fig, axs = plt.subplots(n_rows, 2, figsize=(20, 6 * n_rows), squeeze=False)
             
-            train_trend = 'increasing' if y[-1] > y[0] else 'decreasing'
-            print(f"Greenery Trend for {name} based on Training Data: {train_trend}")
+            train_trend = 'increasing' if y[-1][0] > y[0][0] else 'decreasing'
+            print(f"🌿 Greenery Trend for {name} based on Training Data: {train_trend}")
 
             for i, (reg_name, regressor) in enumerate(regressors.items()):
                 regressor.fit(X_scaled, y_scaled.ravel())
 
                 ax = axs[i, 0]
-                ax.scatter(df['Date'], y, color='blue', label='Actual NDVI', s=30)
-                ax.plot(df['Date'], scaler_y.inverse_transform(regressor.predict(X_scaled).reshape(-1, 1)), color='orange', label='Fitted NDVI', linewidth=1.5)
+                ax.scatter(df['Date'], y.flatten(), color='blue', label='Actual NDVI', s=30)
+
+                fitted = scaler_y.inverse_transform(
+                    regressor.predict(X_scaled).reshape(-1, 1)
+                ).flatten()
+                ax.plot(df['Date'], fitted, color='orange', label='Fitted NDVI', linewidth=1.5)
 
                 predictions_scaled = regressor.predict(future_timestamps_scaled)
-                predictions = scaler_y.inverse_transform(predictions_scaled.reshape(-1, 1))
+                predictions = scaler_y.inverse_transform(predictions_scaled.reshape(-1, 1)).flatten()
 
                 ax.plot(future_dates, predictions, color='green', label='Predicted NDVI', linewidth=1.5)
                 ax.set_title(f'{reg_name} - {name}')
@@ -115,17 +125,20 @@ class GreenAreaAnalyzer:
                 trend = 'increasing' if predictions[-1] > predictions[0] else 'decreasing'
 
                 ax2 = axs[i, 1]
-                ax2.plot(future_dates, predictions, color='green' if trend == 'increasing' else 'red', marker='o')
-                ax2.set_title(f'Greenery Trend - {reg_name}')
+                ax2.plot(future_dates, predictions,
+                         color='green' if trend == 'increasing' else 'red', marker='o')
+                ax2.set_title(f'Greenery Trend - {reg_name} ({trend})')
                 ax2.grid(True)
-                ax2.set_yticks(np.arange(min(predictions)[0] - 0.005, max(predictions)[0] + 0.005, 0.005))
+                ax2.set_yticks(np.arange(min(predictions) - 0.005, max(predictions) + 0.005, 0.005))
 
             plt.tight_layout()
             plt.show()
-
+            
 if __name__ == "__main__":
-    locations = {
-        'Location 1': [-3.5, -60.0, -3.0, -59.5]
-    }
-    analyzer = GreenAreaAnalyzer(locations)
-    analyzer.plot_and_predict()
+  locations = {
+    'Amazon Rainforest (Brazil)': [-3.5, -60.0, -3.0, -59.5],
+    'Ganges Delta (India/Bangladesh)': [22.0, 89.0, 22.5, 89.5],
+  }
+
+  analyzer = GreenAreaAnalyzer(locations)
+  analyzer.plot_and_predict()
